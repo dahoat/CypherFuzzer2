@@ -29,6 +29,7 @@ data class RelationshipSettings(
     val defectDirectionProbability: Double = 0.1,
     val propertiesPerRelationship: IntRange = 0..1,
     val defectPropertyProbability: Double = 0.1,
+    val defectPropertyTypeProbability: Double = 0.1,
     val bidirectionalProbability: Double = 0.1,
     val defectLabelProbability: Double = 0.1,
     val variableLengthRange: IntRange = 1..3,
@@ -141,6 +142,7 @@ class RelationshipSettingsBuilder {
     var defectDirectionProbability: Double = 0.1
     var propertiesPerRelationship: IntRange = 0..1
     var defectPropertyProbability: Double = 0.1
+    var defectPropertyTypeProbability: Double = 0.1
     var bidirectionalProbability: Double = 0.1
     var defectLabelProbability: Double = 0.1
     var variableLengthRange: IntRange = 1..3
@@ -153,6 +155,7 @@ class RelationshipSettingsBuilder {
         defectDirectionProbability = defectDirectionProbability,
         propertiesPerRelationship = propertiesPerRelationship,
         defectPropertyProbability = defectPropertyProbability,
+        defectPropertyTypeProbability = defectPropertyTypeProbability,
         bidirectionalProbability = bidirectionalProbability,
         defectLabelProbability = defectLabelProbability,
         variableLengthRange = variableLengthRange,

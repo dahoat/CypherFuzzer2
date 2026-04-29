@@ -520,7 +520,7 @@ class FuzzQuery(
 
         val propertyNodes = mutableListOf<AstInternalNode>()
         repeat(selectCount(settings.node.propertiesPerNode)) {
-            propertyNodes.add(generatePropertyNode(patternContext))
+            generatePropertyNode(patternContext)?.let { propertyNodes.add(it) }
         }
         if (propertyNodes.isNotEmpty()) {
             val properties = AstInternalNode(AstType.PROPERTIES)
@@ -536,10 +536,15 @@ class FuzzQuery(
         val fromLastNode = schema.relationships.filter { it.from == patternContext.previousCypherNode }.filter { it.to == patternContext.currentCypherNode }
         val toLastNode = schema.relationships.filter { it.to == patternContext.previousCypherNode }.filter { it.from == patternContext.currentCypherNode }
 
-        val direction: AstType
-        val label: String?
-        if (fromLastNode.isNotEmpty() || toLastNode.isNotEmpty()) {
+        var direction: AstType
+        var label: String?
+        if (flipCoin(settings.relationship.defectConnectionProbability)) {
+            // Defect: ignore schema, use random direction and label
+            direction = setOf(AstType.RELATION_BOTH, AstType.RELATION_LEFT, AstType.RELATION_RIGHT).random(settings.random)
+            label = null
+        } else if (fromLastNode.isNotEmpty() || toLastNode.isNotEmpty()) {
             val relationshipSchema = (fromLastNode + toLastNode).random(settings.random)
+            patternContext.currentRelationship = relationshipSchema
 
             direction = if (relationshipSchema.bidirectional && flipCoin(settings.relationship.bidirectionalProbability)) {
                 AstType.RELATION_BOTH
@@ -560,6 +565,25 @@ class FuzzQuery(
             }
         }
 
+        // Defect: flip direction
+        if (flipCoin(settings.relationship.defectDirectionProbability)) {
+            direction = when (direction) {
+                AstType.RELATION_LEFT -> AstType.RELATION_RIGHT
+                AstType.RELATION_RIGHT -> AstType.RELATION_LEFT
+                else -> direction
+            }
+        }
+
+        if (label != null && flipCoin(settings.relationship.defectTypeProbability)) {
+            val allLabels = schema.relationships.map { it.label }
+            if (allLabels.isNotEmpty()) {
+                label = allLabels.random(settings.random)
+            }
+        }
+        else if (flipCoin(settings.relationship.defectLabelProbability)) {
+            label = randomLabel()
+        }
+
         val relationship = AstInternalNode(direction)
 
         var relationshipVariable: AstLeafValue? = null
@@ -576,7 +600,22 @@ class FuzzQuery(
 
         variableStore.addRelationshipVariable(relationshipVariable, labelNode)
 
+        val propertyNodes = mutableListOf<AstInternalNode>()
+        repeat(selectCount(settings.relationship.propertiesPerRelationship)) {
+            generateRelationshipProperty(patternContext)?.let { propertyNodes.add(it) }
+        }
+        if (propertyNodes.isNotEmpty()) {
+            val properties = AstInternalNode(AstType.PROPERTIES)
+            properties.elements.addAll(propertyNodes)
+            relationship.elements.add(properties)
+        }
+
         return relationship
+    }
+
+    private fun generateRelationshipProperty(patternContext: PatternContext): AstInternalNode? {
+        val properties = patternContext.currentRelationship?.properties
+        return generateProperty(properties, settings.relationship.defectPropertyProbability, settings.relationship.defectPropertyTypeProbability)
     }
 
     private fun nextVariable(): AstLeafValue {
@@ -606,13 +645,34 @@ class FuzzQuery(
         return RANDOM_LABEL_PREFIX + settings.random.nextInt(100)
     }
 
-    private fun generatePropertyNode(patternContext: PatternContext): AstInternalNode {
+    private fun generatePropertyNode(patternContext: PatternContext): AstInternalNode? {
 
-        val currentNodeSchema = patternContext.currentCypherNode
-        val selectedProperty = currentNodeSchema?.properties?.random(settings.random) ?: CypherProperty(randomString(), randomType())
+        val properties = patternContext.currentCypherNode?.properties
+        return generateProperty(properties, settings.node.defectPropertyProbability, settings.node.defectPropertyTypeProbability)
+    }
+
+    private fun generateProperty(
+        schemaProperties: Collection<CypherProperty<*>>?,
+        defectPropertyProbability: Double,
+        defectPropertyTypeProbability: Double
+    ): AstInternalNode? {
+        if (schemaProperties.isNullOrEmpty()) return null
+        val schemaProperty = schemaProperties.random(settings.random)
+
+        val selectedProperty = if (flipCoin(defectPropertyProbability)) {
+            CypherProperty(randomString(), schemaProperty.type)
+        } else {
+            schemaProperty
+        }
+
+        val valueType = if (flipCoin(defectPropertyTypeProbability)) {
+            randomTypeExcluding(selectedProperty.type)
+        } else {
+            selectedProperty.type
+        }
 
         val structuralGroup = AstInternalNode(AstType.STRUCTURAL_GROUP)
-        structuralGroup.elements.add(generatePropertyValueNode(selectedProperty.type, selectedProperty))
+        structuralGroup.elements.add(generatePropertyValueNode(valueType, selectedProperty))
         val propertyNode = AstInternalNode(AstType.PROPERTY)
         propertyNode.elements.add(AstLeafValue(AstType.PROPERTY_KEY_NAME, selectedProperty.name))
         propertyNode.elements.add(structuralGroup)
@@ -621,6 +681,11 @@ class FuzzQuery(
 
     private fun randomType(): KClass<*> {
         return setOf(String::class, Boolean::class, Int::class, Long::class, Double::class).random(settings.random)
+    }
+
+    private fun randomTypeExcluding(exclude: KClass<*>): KClass<*> {
+        val types = setOf(String::class, Boolean::class, Int::class, Long::class, Double::class) - exclude
+        return types.random(settings.random)
     }
 
     private fun generatePropertyValueNode(type: KClass<*>, cypherProperty: CypherProperty<out Any>): AstLeafValue {
@@ -712,9 +777,11 @@ class VariableStore {
 class PatternContext {
     var previousCypherNode: CypherNode? = null
     var currentCypherNode: CypherNode? = null
+    var currentRelationship: CypherRelationship? = null
 
     fun prepareForRelationship() {
         previousCypherNode = currentCypherNode
         currentCypherNode = null
+        currentRelationship = null
     }
 }

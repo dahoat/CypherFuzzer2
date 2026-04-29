@@ -47,14 +47,30 @@ class CypherSchema(init: CypherSchema.() -> Unit) {
     fun fetchValuesFromDatabase(session: Session) {
         nodes.forEach { node ->
             node.properties.forEach { property ->
-                populateValues(session, node, property)
+                populateNodeValues(session, node, property)
+            }
+        }
+        relationships.forEach { rel ->
+            rel.properties.forEach { property ->
+                populateRelationshipValues(session, rel, property)
             }
         }
     }
 
-    private fun <T: Any> populateValues(session: Session, node: CypherNode, property: CypherProperty<T>) {
+    private fun <T: Any> populateNodeValues(session: Session, node: CypherNode, property: CypherProperty<T>) {
         val labels = node.labels.joinToString(":")
         val res = session.run("MATCH (n:$labels) where n.${property.name} is not NULL return distinct n.${property.name} as values")
+        res.stream().map {
+            it["values"]
+        }.map {
+            unwrap(it, property.type)
+        }.forEach {
+            property.values.add(it)
+        }
+    }
+
+    private fun <T: Any> populateRelationshipValues(session: Session, rel: CypherRelationship, property: CypherProperty<T>) {
+        val res = session.run("MATCH ()-[r:${rel.label}]-() where r.${property.name} is not NULL return distinct r.${property.name} as values")
         res.stream().map {
             it["values"]
         }.map {
@@ -109,6 +125,12 @@ class CypherRelationship(
     val to: CypherNode,
     val bidirectional: Boolean
 ) {
+    val properties = mutableSetOf<CypherProperty<*>>()
+
+    fun <T : Any> property(name: String, klass: KClass<T>, vararg values: T) {
+        properties.add(CypherProperty(name, klass, values.toMutableSet()))
+    }
+
     override fun toString(): String {
         val direction = if (bidirectional) "" else ">"
         val middlePart = if (label.isNotEmpty()) "[:$label]" else ""
